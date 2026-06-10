@@ -1,0 +1,26 @@
+﻿# Dependencies
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Codex data (user-specific, never commit)
+~/.codex-habit/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local env
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+logs/

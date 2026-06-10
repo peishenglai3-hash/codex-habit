@@ -1,0 +1,122 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Habit Resonance — Graph Visualization</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+header { padding: 2rem; text-align: center; border-bottom: 1px solid #1e293b; }
+h1 { font-size: 1.5rem; font-weight: 600; color: #8b5cf6; }
+h1 small { font-size: 0.875rem; color: #64748b; font-weight: 400; }
+.stats { display: flex; gap: 1.5rem; justify-content: center; margin-top: 1rem; }
+.stat { text-align: center; }
+.stat-value { font-size: 2rem; font-weight: 700; color: #f1f5f9; }
+.stat-label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+.graph-container { max-width: 1200px; margin: 2rem auto; padding: 1rem; background: #1e293b; border-radius: 12px; min-height: 500px; }
+.details { max-width: 1200px; margin: 2rem auto; padding: 1rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.card { background: #1e293b; border-radius: 12px; padding: 1.5rem; }
+.card h3 { font-size: 0.875rem; color: #8b5cf6; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.pattern { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid #334155; font-size: 0.875rem; }
+.pattern:last-child { border-bottom: none; }
+.pattern-name { color: #e2e8f0; }
+.pattern-conf { color: #22c55e; font-weight: 600; }
+.category-bar { display: flex; align-items: center; gap: 0.75rem; margin: 0.5rem 0; }
+.category-label { min-width: 140px; font-size: 0.8rem; color: #94a3b8; }
+.category-count { font-size: 0.8rem; color: #8b5cf6; font-weight: 600; min-width: 30px; }
+.bar { height: 8px; border-radius: 4px; background: linear-gradient(90deg, #8b5cf6, #6366f1); transition: width 0.5s; }
+pre { display: none; }
+@media (max-width: 768px) { .details { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Habit Resonance <small>Kernel v0.2</small></h1>
+  <div class="stats" id="stats"></div>
+</header>
+
+<div class="graph-container">
+  <pre id="mermaidGraph"></pre>
+  <div class="mermaid" id="mermaidOutput"></div>
+</div>
+
+<div class="details">
+  <div class="card">
+    <h3>Signal Categories</h3>
+    <div id="categories"></div>
+  </div>
+  <div class="card">
+    <h3>Top Patterns</h3>
+    <div id="patterns"></div>
+  </div>
+</div>
+
+<script>
+async function loadGraphData() {
+  // Read graph_state.json via a tiny Node helper
+  const resp = await fetch('/api/graph');
+  const data = await resp.json();
+  renderGraph(data);
+}
+
+async function renderGraph(data) {
+  const stats = document.getElementById('stats');
+  stats.innerHTML = [
+    '<div class="stat"><div class="stat-value">' + (data.signals || 0) + '</div><div class="stat-label">Signals</div></div>',
+    '<div class="stat"><div class="stat-value">' + (data.associations || 0) + '</div><div class="stat-label">Associations</div></div>',
+    '<div class="stat"><div class="stat-value">' + (data.patterns || 0) + '</div><div class="stat-label">Patterns</div></div>',
+  ].join('');
+
+  // Mermaid: show category nodes
+  const cats = data.categories || {};
+  const catKeys = Object.keys(cats);
+  
+  let mermaidDef = 'graph TD\n';
+  catKeys.forEach((k, i) => {
+    const id = 'C' + i;
+    const label = k.slice(0, 20);
+    mermaidDef += `  ${id}["${label} (${cats[k]})"]\n`;
+  });
+  
+  // Add edges if associations available
+  if (data.assocList) {
+    data.assocList.slice(0, 30).forEach(a => {
+      const fromIdx = catKeys.indexOf(a.from);
+      const toIdx = catKeys.indexOf(a.to);
+      if (fromIdx >= 0 && toIdx >= 0 && fromIdx !== toIdx) {
+        const w = Math.round(a.strength * 4);
+        mermaidDef += `  C${fromIdx} -.->|"${a.strength.toFixed(2)}"| C${toIdx}\n`;
+      }
+    });
+  }
+
+  document.getElementById('mermaidGraph').textContent = mermaidDef;
+  mermaid.run({ nodes: [document.getElementById('mermaidOutput')] });
+
+  // Categories
+  const catsDiv = document.getElementById('categories');
+  const maxCount = Math.max(...Object.values(cats), 1);
+  catsDiv.innerHTML = catKeys.map(k => {
+    const pct = (cats[k] / maxCount * 100).toFixed(0);
+    return '<div class="category-bar"><span class="category-label">' + k.slice(0, 25) + '</span><span class="category-count">' + cats[k] + '</span><div class="bar" style="width:' + pct + '%"></div></div>';
+  }).join('');
+
+  // Patterns
+  const patDiv = document.getElementById('patterns');
+  const pats = data.patternList || [];
+  patDiv.innerHTML = pats.slice(0, 12).map(p => {
+    const pct = Math.round((p.confidence || 0) * 100);
+    return '<div class="pattern"><span class="pattern-name">' + (p.trigger || '?').slice(0, 35) + '</span><span class="pattern-conf">' + pct + '%</span></div>';
+  }).join('');
+}
+
+// For file:// protocol, embed data differently
+// We'll provide a helper script to generate the data JSON
+loadGraphData().catch(() => {
+  document.getElementById('mermaidOutput').innerHTML = '<p style="color:#94a3b8;text-align:center;padding:4rem">Run: <code>node scripts/graph-data.mjs</code> then open this page</p>';
+});
+</script>
+</body>
+</html>

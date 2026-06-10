@@ -1,0 +1,54 @@
+﻿{
+  "description": "Codex Habit — auto-load habit learning hooks",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "skill",
+            "skill": "codex-habit-skill",
+            "command": "load profile and inject context",
+            "timeout": 30,
+            "statusMessage": "Loading your habit profile…"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "skill",
+            "skill": "codex-habit-skill",
+            "command": "analyze prompt for signal patterns",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/signal-capture.mjs\" --capture",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/signal-capture.mjs\" --flush",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
