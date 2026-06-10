@@ -1,12 +1,11 @@
-﻿# Dependencies
+﻿# Codex Habit - .gitignore
+
+# Dependencies
 node_modules/
 
 # OS files
 .DS_Store
 Thumbs.db
-
-# Codex data (user-specific, never commit)
-~/.codex-habit/
 
 # Python cache
 __pycache__/
@@ -24,3 +23,13 @@ __pycache__/
 # Logs
 *.log
 logs/
+
+# Third-party skills (installed via npx skills add)
+.agents/skills/*
+# But keep our own skill
+!.agents/skills/codex-habit-skill/
+
+# Internal development scripts
+scripts/capture_batch.py
+scripts/rebuild_*.py
+skills-lock.json
