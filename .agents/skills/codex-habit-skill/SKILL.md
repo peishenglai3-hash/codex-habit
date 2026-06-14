@@ -314,3 +314,211 @@ This skill is designed to evolve:
 - **v1.0**: Full resonance — Codex anticipates your needs before you ask
 
 The core principle: every interaction is a learning opportunity, and every session makes the next one better.
+
+## 12. THEORETICAL FRAMEWORK
+
+This skill is grounded in two sociological traditions that inform every layer of the system.
+
+### 12.1 Ethnomethodology (Harold Garfinkel)
+
+**Core insight:** Social order is not imposed by external rules but produced and recognized by members in situ.
+
+**Applied in this system:**
+
+| Concept | Implementation |
+|---|---|
+| **Indexicality** — meaning depends on context, utterances are never fully explicit | Every signal carries a `context` tag. A "prefer React" during prototyping differs from "prefer React" during enterprise architecture planning. Pattern matching indexes by context, not just value. |
+| **Reflexivity** — describing behavior changes behavior | The foresight engine tracks whether its own observations alter user behavior. If the user changes course after a foresight, that is itself a signal (a "reflexive correction"). |
+| **Accountability** — people make their actions observable-and-reportable | When a user justifies a choice ("I prefer React because the ecosystem is mature"), the justification structure is captured alongside the preference. The "because" is as important as the "what". |
+| **Members' Methods** — users develop practical methods for working with AI | The system learns these methods from observation rather than imposing predefined categories. Methods are discovered, not prescribed. |
+
+### 12.2 French Pragmatism / Pragmatic Sociology (Boltanski & Thévenot)
+
+**Core insight:** People do not have fixed preferences. They navigate between multiple "orders of worth" (cités/grammaires) depending on situation. Action is situated judgment.
+
+**The Six Orders of Worth (applied to coding):**
+
+| Order | Value | Coding Equivalent |
+|---|---|---|
+| **Inspirational** | Creativity, originality, breakthrough | "This is elegant", "feels right", novel approach |
+| **Domestic** | Trust, tradition, personal bonds | "This is how we always do it", "senior dev taught me" |
+| **Fame** | Recognition, reputation, visibility | "This is industry standard", "everyone uses it" |
+| **Civic** | Collective good, equality | "This is more accessible", "open source spirit" |
+| **Market** | Competition, efficiency, value | "This is faster to ship", "cost-effective" |
+| **Industrial** | Reliability, efficiency, system | "This is well-architected", "scalable", "testable" |
+
+**Applied in this system:**
+
+| Concept | Implementation |
+|---|---|
+| **Orders of Worth** | Every signal is tagged with the order of worth the user is invoking. Patterns are grouped by order — a "market" preference and an "inspirational" preference can coexist without contradiction when in different situations. |
+| **Tests (Épreuves)** | When a user's stated preference conflicts with their actual behavior under constraint, this is a "test". The system does not discard the old pattern — it records the test and adjusts confidence. A preference that survives multiple tests has higher weight. |
+| **Critical Capacity** | Users can reflect on and critique their own choices. The system captures this "second-order" reflection — not just what the user prefers, but their own analysis of why they prefer it. |
+
+### 12.3 Integration — How Theory Shapes the Pipeline
+
+```
+Ethnomethodology           French Pragmatism
+       │                         │
+       ▼                         ▼
+Indexicality           Orders of Worth
+  ──► every signal      ──► patterns grouped by
+      has a context           value system, not
+      tag                     just category
+
+Reflexivity             Tests (Épreuves)
+  ──► foresight engine   ──► preference conflicts
+      tracks its own          are recorded, not
+      feedback effects        discarded
+
+Accountability          Critical Capacity
+  ──► justification      ──► user's self-analysis
+      structure captured       captured as
+      with each signal         second-order signal
+```
+
+---
+
+## 13. HUB ARCHITECTURE — Orchestrating Other Skills
+
+Codex Habitat is designed not just as a passive memory system, but as an **active hub** that coordinates other skills on behalf of the user.
+
+### 13.1 Why a Hub?
+
+In a typical Codex session, multiple skills compete for attention:
+- taste-skill wants to apply its design rules
+- remotion-skills wants to optimize video rendering
+- security-auditor wants to enforce best practices
+- claude-mem wants to inject historical context
+
+Without a hub, these skills operate in isolation. With Habitat as hub, the skills coordinate around a single **user model**.
+
+### 13.2 Architecture
+
+```
+                        ┌──────────────────┐
+                        │   Codex Habitat  │
+                        │  (The Hub)       │
+                        │                  │
+                        │  knows the user  │
+                        └───┬────┬────┬────┘
+                            │    │    │
+                ┌───────────┘    │    └───────────┐
+                ▼                ▼                ▼
+        ┌────────────┐   ┌────────────┐   ┌────────────┐
+        │ taste-skill│   │  remotion  │   │  claude-   │
+        │            │   │ best-prac  │   │  mem       │
+        │ UI style   │   │ video dev  │   │ code hist  │
+        └────────────┘   └────────────┘   └────────────┘
+                │                │                │
+                └────────────────┴────────────────┘
+                               │
+                         ┌─────▼──────┐
+                         │  Output    │
+                         │ (coherent  │
+                         │  with user │
+                         │  identity) │
+                         └────────────┘
+```
+
+### 13.3 Hub Interfaces
+
+The hub exposes three interfaces for other skills:
+
+```
+┌────────────────────────────────────────────────────────┐
+│                    HUB INTERFACES                       │
+├────────────────────────────────────────────────────────┤
+│                                                        │
+│  1. Query Interface (does user prefer X?)               │
+│     ──► Skills ask: "What is the user's style?"        │
+│         Habitat answers: "Prefers clean architecture"   │
+│                                                        │
+│  2. Event Bus (subscribe to user signals)               │
+│     ──► Skills register: "Notify me when user          │
+│         starts a new frontend project"                  │
+│         Habitat emits: "User started frontend work"     │
+│                                                        │
+│  3. Context Provider (current user state)               │
+│     ──► Skills ask: "What is the user currently         │
+│         doing and which order of worth are they in?"    │
+│         Habitat: "Building API (market + industrial)"   │
+│                                                        │
+│  4. Feedback Channel (skills contribute signals)        │
+│     ──► taste-skill: "User accepted a minimal design   │
+│         suggestion" → Habitat captures as new signal    │
+│                                                        │
+│  5. Priority Coordinator (resolves conflicts)           │
+│     ──► taste-skill says "use animation"               │
+│         security says "minimize surface"                │
+│         Habitat checks user profile and votes:          │
+│         "User is in Industrial order → security wins"   │
+└────────────────────────────────────────────────────────┘
+```
+
+### 13.4 Skill Context Protocol
+
+When Habitat passes context to another skill, it uses this standard format:
+
+```yaml
+user_context:
+  profile_snapshot:        # Quick identity
+    name: "Lai Peisheng"
+    academic_direction: "AI Sociology"
+    current_order: "industrial"  # Boltanski order
+  active_signals:          # Recent preferences
+    - "Currently prefers clean architecture"
+    - "Rejected over-engineering earlier"
+  current_context:         # Session context
+    project: "codex-habit"
+    task_type: "refactoring"
+    mode: "research-first"  # Inferred from history
+```
+
+### 13.5 Implementation Roadmap
+
+| Phase | Capability |
+|---|---|
+| **v0.3** | Query Interface (skills can read profile) |
+| **v0.4** | Event Bus (skills subscribe to signals) |
+| **v0.5** | Context Provider (skills get current state) |
+| **v0.6** | Feedback Channel (skills contribute signals) |
+| **v1.0** | Priority Coordinator (full orchestration) |
+
+---
+
+## 14. SIGNAL TAXONOMY (Updated with Theoretical Grounding)
+
+### 14.1 Signal Structure
+
+Every signal now carries:
+
+```yaml
+id: sig_20260614_001
+type: preference
+category: tech_stack
+value: react
+context: "building prototype"         # 🔑 Indexicality — context tag
+order_of_worth: "market"              # 🔑 Boltanski order
+justification: "faster to ship with"  # 🔑 Accountability — reason structure
+test_count: 3                          # 🔑 Épreuve — survived 3 tests
+test_survival_rate: 1.0               # 🔑 All tests confirmed
+reflexive_effect: null                 # 🔑 Ethnomethodology — feedback tracking
+confidence: 0.92
+```
+
+### 14.2 Second-Order Signals (Critical Capacity)
+
+In addition to first-order signals (raw preferences), the system now captures second-order signals:
+
+```yaml
+type: self_reflection
+category: critical_capacity
+value: "I realize I prioritize readability over conciseness"
+context: "code review session"
+order_of_worth: "inspirational"
+confidence: 0.85
+```
+
+These signals are **about** the user's own preferences — they represent a higher level of self-understanding and should be weighted more heavily in pattern extraction.
+

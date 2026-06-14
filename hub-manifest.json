@@ -1,0 +1,50 @@
+﻿{
+  "name": "codex-habit-hub",
+  "version": "0.3.0",
+  "description": "HUB manifest — Codex Habitat as central orchestrator for skill clusters",
+  "interfaces": {
+    "query": {
+      "description": "Skills ask: what does the user prefer?",
+      "endpoint": "node scripts/context-injector.mjs --profile",
+      "response_format": "plain text with key: value pairs",
+      "example": "Academic direction: AI Sociology"
+    },
+    "events": {
+      "description": "Skills subscribe to user signals",
+      "mechanism": "~/.codex-habit/.signals_index.json file watch",
+      "signal_types": ["preference", "rejection", "workflow", "self_reflection"]
+    },
+    "context": {
+      "description": "Current user state (project, task, active order_of_worth)",
+      "endpoint": "node scripts/pattern-matcher.mjs --stats",
+      "includes": "current order_of_worth, active patterns, signal volume"
+    },
+    "feedback": {
+      "description": "Skills contribute signals back to the hub",
+      "format": "echo JSON | node scripts/signal-capture.mjs --capture",
+      "example": "{\"type\":\"preference\",\"category\":\"design\",\"value\":\"minimal\",\"source\":\"taste-skill\"}"
+    },
+    "priority": {
+      "description": "When multiple skills conflict, hub decides based on user profile",
+      "strategy": "Match skill recommendation to user's current order_of_worth"
+    }
+  },
+  "events": {
+    "user_preference_detected": "A new user preference signal was captured",
+    "order_of_worth_shift": "User's active value order changed (e.g., industrial → inspirational)",
+    "pattern_matured": "A pattern reached confidence > 0.7",
+    "test_encountered": "A preference was tested and confirmed/corrected"
+  },
+  "compatible_skills": [
+    "taste-skill (design-taste-frontend)",
+    "claude-mem",
+    "remotion-best-practices",
+    "any skill with npx skills add format"
+  ],
+  "integration_guide": {
+    "read_user_profile": "node scripts/context-injector.mjs --profile",
+    "send_signal": "echo '<json signal>' | node scripts/signal-capture.mjs --capture",
+    "get_current_context": "node scripts/pattern-matcher.mjs --stats",
+    "subscribe_events": "watch ~/.codex-habit/.signals_index.json for changes"
+  }
+}

@@ -1,13 +1,7 @@
 ﻿#!/usr/bin/env node
 /**
- * pattern-matcher.mjs — Habit Resonance Pattern Matcher
- *
- * Given current context, finds matching patterns from the habit graph.
- * Returns ranked foresight candidates.
- *
- * Usage:
- *   node pattern-matcher.mjs --match <context-json>
- *   node pattern-matcher.mjs --search <query>
+ * pattern-matcher.mjs — v0.3 (Theory Upgrade)
+ * Time decay + context-indexed matching + order-of-worth grouping
  */
 
 import { readFileSync, existsSync, readdirSync } from "fs";
@@ -15,73 +9,104 @@ import { join } from "path";
 import { homedir } from "os";
 
 const HABIT_DIR = join(homedir(), ".codex-habit");
-const PATTERNS_ACTIVE = join(HABIT_DIR, "patterns", "active");
+const PAT_ACTIVE = join(HABIT_DIR, "patterns", "active");
 const GRAPH_FILE = join(HABIT_DIR, ".graph_state.json");
 
-function readPatterns() {
-  const patterns = [];
-  if (!existsSync(PATTERNS_ACTIVE)) return patterns;
+const DECAY_RATE = 0.99; // confidence *= 0.99 per day since lastSeen
 
-  const files = readdirSync(PATTERNS_ACTIVE).filter(f => f.endsWith(".md"));
-  for (const f of files) {
-    const content = readFileSync(join(PATTERNS_ACTIVE, f), "utf-8");
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
-    if (match) {
-      try {
-        const meta = {};
-        match[1].split("\n").forEach(line => {
-          const idx = line.indexOf(": ");
-          if (idx > 0) meta[line.slice(0, idx).trim()] = line.slice(idx + 2).trim();
-        });
-        patterns.push({ id: f.replace(".md", ""), ...meta });
-      } catch {}
-    }
-  }
-  return patterns;
+function readPatterns() {
+  if (!existsSync(PAT_ACTIVE)) return [];
+  return readdirSync(PAT_ACTIVE).filter(f => f.endsWith(".md")).map(f => {
+    try {
+      const t = readFileSync(join(PAT_ACTIVE, f), "utf-8");
+      const m = t.match(/^---\n([\s\S]*?)\n---/);
+      if (!m) return null;
+      const meta = {};
+      for (const l of m[1].split("\n")) {
+        const i = l.indexOf(": ");
+        if (i > 0) {
+          const k = l.slice(0, i).trim();
+          const v = l.slice(i + 2).trim();
+          meta[k] = v;
+        }
+      }
+      return meta;
+    } catch { return null; }
+  }).filter(Boolean);
 }
 
-function matchPatterns(context, patterns) {
-  const ctx = context.toLowerCase();
+/** Apply time decay: older patterns lose confidence */
+function applyDecay(pattern) {
+  const age = pattern.lastSeen
+    ? (Date.now() - new Date(pattern.lastSeen).getTime()) / 86400000
+    : 999;
+  const decay = Math.pow(DECAY_RATE, age);
+  return {
+    ...pattern,
+    confidence: (parseFloat(pattern.confidence || "0") || 0) * decay,
+    rawConfidence: parseFloat(pattern.confidence || "0"),
+    age: Math.round(age),
+  };
+}
+
+/**
+ * Context-indexed matching (Indexicality)
+ * Groups patterns by order_of_worth, then matches within the current order
+ */
+function matchByContext(context, patterns) {
+  const ctx = (context || "").toLowerCase();
+  const ctxWords = ctx.split(/\s+/);
+
+  // Detect current order_of_worth from context keywords
+  const orderSignals = {
+    inspirational: ["creative", "elegant", "new", "novel", "breakthrough", "beautiful"],
+    domestic: ["tradition", "established", "convention", "senior", "always"],
+    fame: ["industry standard", "popular", "trending", "everyone", "best practice"],
+    civic: ["accessible", "inclusive", "open", "community", "ethical"],
+    market: ["fast", "ship", "cost", "efficient", "competitive", "value"],
+    industrial: ["architecture", "scalable", "testable", "reliable", "systematic"],
+  };
+
+  let currentOrder = "industrial"; // default
+  let maxScore = 0;
+  for (const [order, signals] of Object.entries(orderSignals)) {
+    const score = signals.filter(s => ctx.includes(s)).length;
+    if (score > maxScore) { maxScore = score; currentOrder = order; }
+  }
+
+  // Score patterns by context match + order match + decayed confidence
   const scored = patterns.map(p => {
     const trigger = (p.trigger || "").toLowerCase();
     const action = (p.action || "").toLowerCase();
-
-    // Simple keyword matching
-    const ctxWords = ctx.split(/\s+/);
-    const triggerWords = trigger.split(/\s+/);
-    const matches = triggerWords.filter(w => ctxWords.includes(w)).length;
-    const score = triggerWords.length > 0 ? matches / triggerWords.length : 0;
-
-    return {
-      pattern: p,
-      matchScore: score,
-      confidence: parseFloat(p.confidence || "0"),
-      combinedScore: score * 0.6 + parseFloat(p.confidence || "0") * 0.4,
-    };
+    const ctxMatch = trigger.split(/\s+/).filter(w => ctxWords.includes(w)).length / Math.max(trigger.split(/\s+/).length, 1);
+    const orderBonus = (p.order_of_worth || "industrial") === currentOrder ? 0.2 : 0;
+    const decayed = applyDecay(p);
+    const combined = ctxMatch * 0.4 + decayed.confidence * 0.4 + orderBonus * 0.2;
+    return { pattern: p, score: combined, currentOrder };
   });
 
-  return scored
-    .filter(s => s.combinedScore > 0.15)
-    .sort((a, b) => b.combinedScore - a.combinedScore)
-    .slice(0, 5);
+  return {
+    currentOrder,
+    matches: scored.filter(s => s.score > 0.12).sort((a, b) => b.score - a.score).slice(0, 10),
+  };
 }
 
 const arg = process.argv[2];
-
 switch (arg) {
   case "--match": {
     let input = "";
-    process.stdin.on("data", chunk => (input += chunk));
+    process.stdin.on("data", c => input += c);
     process.stdin.on("end", () => {
       try {
-        const context = JSON.parse(input).context || input;
-        const patterns = readPatterns();
-        const matches = matchPatterns(context, patterns);
+        const ctx = input ? JSON.parse(input).context || input : "general";
+        const patterns = readPatterns().map(p => applyDecay(p));
+        const result = matchByContext(ctx, patterns);
         console.log(JSON.stringify({
           status: "ok",
           totalPatterns: patterns.length,
-          matches: matches.length,
-          results: matches,
+          currentOrder: result.currentOrder,
+          matches: result.matches.length,
+          results: result.matches,
         }));
       } catch (e) {
         console.error(JSON.stringify({ error: e.message }));
@@ -89,16 +114,16 @@ switch (arg) {
     });
     break;
   }
-  case "--search": {
-    const query = process.argv[3] || "";
+  case "--stats": {
     const patterns = readPatterns();
-    const results = patterns.filter(p => {
-      const searchText = `${p.trigger || ""} ${p.action || ""} ${p.contexts || ""}`.toLowerCase();
-      return searchText.includes(query.toLowerCase());
-    });
-    console.log(JSON.stringify({ status: "ok", query, count: results.length, results }));
+    const total = patterns.length;
+    const stale = patterns.filter(p => {
+      const age = p.lastSeen ? (Date.now() - new Date(p.lastSeen).getTime()) / 86400000 : 999;
+      return age > 30;
+    }).length;
+    console.log(JSON.stringify({ total, stale, active: total - stale }));
     break;
   }
   default:
-    console.log(JSON.stringify({ usage: "node pattern-matcher.mjs [--match | --search]" }));
+    console.log(JSON.stringify({ usage: "node pattern-matcher.mjs [--match | --stats]" }));
 }

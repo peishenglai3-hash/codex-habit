@@ -33,3 +33,7 @@ logs/
 scripts/capture_batch.py
 scripts/rebuild_*.py
 skills-lock.json
+
+# Temp auth scripts
+scripts/askpass.sh
+scripts/git-askpass.ps1
