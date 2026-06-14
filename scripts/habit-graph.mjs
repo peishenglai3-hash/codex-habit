@@ -1,8 +1,9 @@
 ﻿#!/usr/bin/env node
 /**
- * habit-graph.mjs — v0.2
- * Builds associations from signals, extracts patterns with semantic names.
- * Uses adaptive threshold based on signal count.
+ * habit-graph.mjs — v0.3 (Adaptive Threshold)
+ * Threshold adapts to signal distribution using coefficient of variation.
+ * High dispersion (few dominant categories) → lower threshold
+ * Low dispersion (evenly spread) → higher threshold
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "fs";
@@ -13,23 +14,43 @@ const HABIT_DIR = join(homedir(), ".codex-habit");
 const INDEX_FILE = join(HABIT_DIR, ".signals_index.json");
 const PAT_ACTIVE = join(HABIT_DIR, "patterns", "active");
 const GRAPH_FILE = join(HABIT_DIR, ".graph_state.json");
+const EVENTS_DIR = join(HABIT_DIR, ".events");
 
 function assure(p) { if (!existsSync(p)) mkdirSync(p, { recursive: true }); }
+function readJSON(f, fb = {}) { try { return JSON.parse(readFileSync(f, "utf-8")); } catch { return fb; } }
 
-function readJSON(f, fallback = {}) {
-  try { return JSON.parse(readFileSync(f, "utf-8")); } catch { return fallback; }
-}
-
-function buildSignals() {
-  const idx = readJSON(INDEX_FILE, { signals: [] });
+/**
+ * Calculate adaptive threshold using coefficient of variation
+ * CV = σ/μ — measures how clustered signals are across categories
+ */
+function calcAdaptiveThreshold(signals) {
+  // Group by category
   const groups = {};
-  for (const s of idx.signals) {
-    const v = s.value || "unknown";
-    const key = s.category + ":" + v;
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(s);
+  for (const s of signals) {
+    const cat = s.category || "uncategorized";
+    groups[cat] = (groups[cat] || 0) + 1;
   }
-  return { signals: idx.signals, groups };
+
+  const counts = Object.values(groups);
+  const n = counts.length;
+  if (n < 2) return 0.15; // not enough categories
+
+  const mean = counts.reduce((a, b) => a + b, 0) / n;
+  const variance = counts.reduce((sum, c) => sum + (c - mean) ** 2, 0) / n;
+  const std = Math.sqrt(variance);
+  const cv = mean > 0 ? std / mean : 0;
+
+  // Base rate: scales with total signal count
+  const baseRate = Math.max(0.10, Math.min(0.30, signals.length / 100));
+
+  // Adaptive threshold: higher CV → lower threshold (more discovery)
+  // Lower CV → higher threshold (more conservative)
+  const threshold = baseRate / (1 + cv * 1.5);
+
+  // Clamp to reasonable range
+  const clamped = Math.max(0.08, Math.min(0.40, threshold));
+
+  return { threshold: clamped, cv: Math.round(cv * 100) / 100, baseRate, groups: Object.keys(groups).length };
 }
 
 function buildAssociations(groups) {
@@ -39,38 +60,31 @@ function buildAssociations(groups) {
     for (let j = i + 1; j < keys.length; j++) {
       const count = groups[keys[i]].length + groups[keys[j]].length;
       if (count >= 2) {
-        result.push({
-          from: keys[i], to: keys[j],
-          strength: Math.min(1, count / 5),
-          frequency: count
-        });
+        result.push({ from: keys[i], to: keys[j], strength: Math.min(1, count / 5), frequency: count });
       }
     }
   }
   return result.sort((a, b) => b.strength - a.strength);
 }
 
-function extractPatterns(associations, signalCount) {
-  const threshold = Math.max(0.15, signalCount > 30 ? 0.25 : 0.15);
+function extractPatterns(associations, threshold) {
   const seen = new Set();
   const patterns = [];
   for (const a of associations) {
     if (a.strength < threshold) continue;
-    const key = a.from + "__" + a.to;
+    const key = `${a.from}__${a.to}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const f = a.from.split(":");
     const t = a.to.split(":");
-    const catA = f[0], valA = f.slice(1).join(":") || "?";
-    const catB = t[0], valB = t.slice(1).join(":") || "?";
     patterns.push({
-      id: "pat_" + catA + "_" + catB,
-      trigger: valA.slice(0, 40),
-      action: valB.slice(0, 40),
-      category: catA + " <-> " + catB,
+      id: `pat_${f[0]}_${t[0]}`,
+      trigger: (f.slice(1).join(":") || "?").slice(0, 40),
+      action: (t.slice(1).join(":") || "?").slice(0, 40),
       confidence: a.strength,
       frequency: a.frequency,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      lastSeen: new Date().toISOString(),
     });
   }
   return patterns;
@@ -78,26 +92,19 @@ function extractPatterns(associations, signalCount) {
 
 function persistPatterns(patterns) {
   assure(PAT_ACTIVE);
-  const existing = existsSync(PAT_ACTIVE) ? readdirSync(PAT_ACTIVE).filter(f => f.endsWith(".md")) : [];
-  existing.forEach(f => unlinkSync(join(PAT_ACTIVE, f)));
+  if (existsSync(PAT_ACTIVE)) {
+    readdirSync(PAT_ACTIVE).filter(f => f.endsWith(".md")).forEach(f => unlinkSync(join(PAT_ACTIVE, f)));
+  }
   for (const p of patterns) {
     const md = [
       "---",
-      "id: " + p.id,
-      "trigger: " + p.trigger,
-      "action: " + p.action,
-      "confidence: " + p.confidence,
-      "frequency: " + p.frequency,
-      "createdAt: " + p.createdAt,
-      "---",
-      "",
-      "# Pattern: " + p.trigger,
-      "**Category:** " + p.category,
-      "**Action:** " + p.action,
-      "**Confidence:** " + Math.round(p.confidence * 100) + "%",
-      "**Frequency:** " + p.frequency + " signals"
+      ...Object.entries(p).map(([k, v]) => `${k}: ${v}`),
+      "---", "",
+      `# Pattern: ${p.trigger}`,
+      `**Confidence:** ${Math.round(p.confidence * 100)}%`,
+      `**Frequency:** ${p.frequency} signals`,
     ].join("\n");
-    writeFileSync(join(PAT_ACTIVE, p.id + ".md"), md);
+    writeFileSync(join(PAT_ACTIVE, `${p.id}.md`), md);
   }
 }
 
@@ -106,27 +113,56 @@ assure(HABIT_DIR);
 
 switch (arg) {
   case "--build": {
-    const { signals, groups } = buildSignals();
-    if (signals.length < 3) {
-      console.log(JSON.stringify({ status: "need_more_signals", count: signals.length }));
+    const idx = readJSON(INDEX_FILE, { signals: [] });
+    if (idx.signals.length < 3) {
+      console.log(JSON.stringify({ status: "need_more", count: idx.signals.length }));
       process.exit(0);
     }
-    const assoc = buildAssociations(groups);
-    const patterns = extractPatterns(assoc, signals.length);
+
+    // Adaptive threshold
+    const { threshold, cv, baseRate, groups } = calcAdaptiveThreshold(idx.signals);
+
+    // Build groups
+    const g = {};
+    for (const s of idx.signals) {
+      const v = s.value || "?";
+      const key = `${s.category}:${v}`;
+      if (!g[key]) g[key] = [];
+      g[key].push(s);
+    }
+
+    const assoc = buildAssociations(g);
+    const patterns = extractPatterns(assoc, threshold);
+
     persistPatterns(patterns);
+
     const graph = readJSON(GRAPH_FILE);
     graph.associations = assoc;
     graph.lastBuilt = new Date().toISOString();
     graph.patternCount = patterns.length;
+    graph.adaptiveThreshold = { value: threshold, cv, baseRate, numCategories: groups };
     writeFileSync(GRAPH_FILE, JSON.stringify(graph, null, 2));
-    console.log(JSON.stringify({ status: "ok", signals: signals.length, associations: assoc.length, patterns: patterns.length }));
+
+    console.log(JSON.stringify({
+      status: "ok",
+      signals: idx.signals.length,
+      associations: assoc.length,
+      patterns: patterns.length,
+      adaptiveThreshold: { threshold: Math.round(threshold * 100) / 100, cv, baseRate, groups },
+    }));
     break;
   }
   case "--stats": {
     const idx = readJSON(INDEX_FILE, { signals: [] });
     const active = existsSync(PAT_ACTIVE) ? readdirSync(PAT_ACTIVE).filter(f => f.endsWith(".md")).length : 0;
     const g = readJSON(GRAPH_FILE);
-    console.log(JSON.stringify({ signals: idx.signals.length, patterns: active, lastBuilt: g.lastBuilt }));
+    const threshold = g.adaptiveThreshold || {};
+    console.log(JSON.stringify({
+      signals: idx.signals.length,
+      patterns: active,
+      adaptiveThreshold: threshold,
+      lastBuilt: g.lastBuilt,
+    }));
     break;
   }
   default:

@@ -1,14 +1,13 @@
 ﻿#!/usr/bin/env node
 /**
- * signal-capture.mjs — Habit Resonance Signal Capture Engine (v0.2)
- *
- * Fixed: now includes `value` in the index for pattern extraction.
+ * signal-capture.mjs — v0.3 (Theory Upgrade)
+ * Adds: order_of_worth, justification, test_count, reflexive_effect
+ * All new fields are optional — backward compatible.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs";
-import { join, dirname } from "path";
+import { join } from "path";
 import { homedir } from "os";
-import { randomUUID } from "crypto";
 
 const HABIT_DIR = join(homedir(), ".codex-habit");
 const SIGNALS_DIR = join(HABIT_DIR, "signals");
@@ -25,26 +24,20 @@ function readBuffer() {
   try { return JSON.parse(readFileSync(BUFFER_FILE, "utf-8")); }
   catch { return { signals: [] }; }
 }
-
-function writeBuffer(buf) { writeFileSync(BUFFER_FILE, JSON.stringify(buf, null, 2)); }
-
+function writeBuffer(b) { writeFileSync(BUFFER_FILE, JSON.stringify(b, null, 2)); }
 function readIndex() {
   try { return JSON.parse(readFileSync(INDEX_FILE, "utf-8")); }
   catch { return { signals: [], patterns: [] }; }
 }
-
-function writeIndex(idx) { writeFileSync(INDEX_FILE, JSON.stringify(idx, null, 2)); }
+function writeIndex(i) { writeFileSync(INDEX_FILE, JSON.stringify(i, null, 2)); }
 
 function flushBuffer() {
   const buf = readBuffer();
-  if (buf.signals.length === 0) {
-    console.log(JSON.stringify({ status: "empty", flushed: 0 }));
-    return;
-  }
+  if (buf.signals.length === 0) return console.log(JSON.stringify({ status: "empty", flushed: 0 }));
 
   const now = new Date();
-  const monthDir = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const targetDir = join(SIGNALS_DIR, monthDir);
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const targetDir = join(SIGNALS_DIR, month);
   if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
 
   let flushed = 0;
@@ -54,51 +47,54 @@ function flushBuffer() {
     sig.id = id;
     sig.timestamp = now.toISOString();
 
+    // Build markdown with optional theory fields
     const meta = { ...sig };
     delete meta.evidence;
     delete meta.context;
-    const frontmatter = [
-      "---",
-      ...Object.entries(meta).map(([k, v]) =>
-        typeof v === "object" ? `${k}: ${JSON.stringify(v)}` : `${k}: ${v}`
-      ),
-      "---",
-      "",
-      `**Evidence:** ${sig.evidence || "(auto-captured)"}`,
-      `**Context:** ${sig.context || "(general)"}`,
-    ].join("\n");
+    const lines = ["---"];
+    for (const [k, v] of Object.entries(meta)) {
+      if (v !== undefined && v !== null) lines.push(`${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`);
+    }
+    lines.push("---", "", `Evidence: ${sig.evidence || "(auto)"}`);
 
-    const filePath = join(targetDir, `${id}.md`);
-    writeFileSync(filePath, frontmatter);
+    writeFileSync(join(targetDir, `${id}.md`), lines.join("\n"));
 
-    // ✅ FIX: store `value` in index for pattern extraction
+    // Store in index — include all theory fields
     index.signals.push({
       id, type: sig.type, category: sig.category,
-      value: sig.value || "", // <-- was missing, now fixed
-      timestamp: sig.timestamp, filePath
+      value: sig.value || "", timestamp: sig.timestamp,
+      confidence: sig.confidence || 0.5,
+      // Theory-grounded fields (optional)
+      order_of_worth: sig.order_of_worth || null,
+      justification: sig.justification || null,
+      test_count: sig.test_count || 0,
+      test_survival_rate: sig.test_survival_rate || null,
+      reflexive_effect: sig.reflexive_effect || null,
+      context_label: sig.context_label || null,
+      source: sig.source || "codex",
     });
     flushed++;
   }
 
   writeIndex(index);
   writeBuffer({ signals: [] });
-  console.log(JSON.stringify({ status: "flushed", count: flushed }));
+  console.log(JSON.stringify({ status: "flushed", count: flushed, theoryFields: true }));
 }
 
 function capture() {
   ensureDirs();
   const buf = readBuffer();
   let input = "";
-  process.stdin.on("data", chunk => (input += chunk));
+  process.stdin.on("data", c => input += c);
   process.stdin.on("end", () => {
     try {
       const sig = JSON.parse(input);
       sig.timestamp = new Date().toISOString();
       buf.signals.push(sig);
       writeBuffer(buf);
-      const bufSize = buf.signals.length;
-      console.log(JSON.stringify({ status: "captured", bufferSize: bufSize }));
-      if (bufSize >= 5) flushBuffer();
+      const s = buf.signals.length;
+      console.log(JSON.stringify({ status: "captured", bufferSize: s }));
+      if (s >= 5) flushBuffer();
     } catch (e) {
       console.error(JSON.stringify({ error: e.message }));
       process.exit(1);
