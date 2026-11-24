@@ -85,6 +85,12 @@ function indexEntry(sig) {
     category: sig.category,
     value: sig.value || "",
     timestamp: sig.timestamp,
+    session_id: sig.session_id ?? null,
+    context: sig.context ?? null,
+    evidence: sig.evidence ?? null,
+    evidence_refs: sig.evidence_refs ?? null,
+    decision: sig.decision ?? null,
+    decision_confirmation: sig.decision_confirmation ?? null,
     confidence: sig.confidence ?? 0.5,
     // Optional theory fields preserve provenance without asserting confirmation.
     order_of_worth: sig.order_of_worth ?? null,
@@ -100,7 +106,6 @@ function indexEntry(sig) {
 function signalMarkdown(sig) {
   const meta = { ...sig };
   delete meta.evidence;
-  delete meta.context;
   const lines = ["---"];
   for (const [key, value] of Object.entries(meta)) {
     if (value !== undefined && value !== null) {

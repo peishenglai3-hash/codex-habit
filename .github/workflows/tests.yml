@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  signal-capture:
+  habit-memory:
     strategy:
       fail-fast: false
       matrix:
@@ -30,8 +30,8 @@ jobs:
           node-version: 24.15.0
           check-latest: false
 
-      - name: Run isolated signal-capture regressions
-        run: node --test tests/signal-capture.test.mjs
+      - name: Run isolated signal and graph regressions
+        run: node --test tests/signal-capture.test.mjs tests/habit-graph.test.mjs
 
       - name: Run isolated Windows uninstall regressions
         if: runner.os == 'Windows'

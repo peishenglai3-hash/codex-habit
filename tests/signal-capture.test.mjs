@@ -114,3 +114,39 @@ test("a bad derived index leaves the buffered signal available for recovery", ()
     assert.equal(readFileSync(indexPath, "utf8"), malformedIndex);
   });
 });
+
+test("generic decision capture retains provenance and leaves confirmation unknown", () => {
+  withIsolatedHome(({ habit, invoke }) => {
+    const signal = {
+      type: "decision",
+      category: "architecture",
+      value: "choose the smaller migration",
+      session_id: "synthetic-session-01",
+      source: "user_utterance",
+      evidence: "Synthetic evidence text.",
+      evidence_refs: ["event:turn-02", "file:decision-note"],
+      decision: { selected: "smaller migration", alternative: "full rewrite" },
+    };
+    const captured = invoke(["--capture"], JSON.stringify(signal));
+    assert.equal(captured.status, 0, captured.stderr);
+    const flushed = invoke(["--flush"]);
+    assert.equal(flushed.status, 0, flushed.stderr);
+
+    const index = JSON.parse(readFileSync(join(habit, ".signals_index.json"), "utf8"));
+    const [stored] = index.signals;
+    assert.match(stored.id, /^sig_\d{8}_[0-9a-f-]{36}$/);
+    assert.equal(stored.session_id, signal.session_id);
+    assert.equal(stored.source, signal.source);
+    assert.equal(stored.evidence, signal.evidence);
+    assert.deepEqual(stored.evidence_refs, signal.evidence_refs);
+    assert.deepEqual(stored.decision, signal.decision);
+    assert.equal(stored.decision_confirmation, null);
+
+    const month = readdirSync(join(habit, "signals"))[0];
+    const markdown = readFileSync(join(habit, "signals", month, `${stored.id}.md`), "utf8");
+    assert.match(markdown, /^session_id: synthetic-session-01$/m);
+    assert.match(markdown, /^source: user_utterance$/m);
+    assert.match(markdown, /^evidence_refs: \["event:turn-02","file:decision-note"\]$/m);
+    assert.match(markdown, /Evidence: Synthetic evidence text\./);
+  });
+});
