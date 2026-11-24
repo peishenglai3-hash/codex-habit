@@ -1,7 +1,14 @@
-﻿param([switch]$KeepData)
+﻿param(
+  [switch]$DeleteData,
+  [switch]$KeepData
+)
+
+if ($DeleteData -and $KeepData) {
+  throw "Use either -DeleteData or -KeepData, not both."
+}
 
 $HABIT_DIR = "$env:USERPROFILE\.codex-habit"
-$PLUGIN_ROOT = Split-Path -Parent $PSScriptRoot
+$PLUGIN_ROOT = $PSScriptRoot
 
 Write-Host "╔═══════════════════════════════════════════╗" -ForegroundColor Cyan
 Write-Host "║  Codex Habitat — Uninstall                ║" -ForegroundColor Cyan
@@ -21,14 +28,14 @@ foreach ($f in $filesToRemove) {
   }
 }
 
-if (-not $KeepData) {
-  Write-Host "`n🗑️  Removing habit data (use -KeepData to preserve)..." -ForegroundColor Yellow
+if ($DeleteData) {
+  Write-Host "`n🗑️  Removing habit data by explicit request..." -ForegroundColor Yellow
   if (Test-Path $HABIT_DIR) {
     Remove-Item -Recurse -Force $HABIT_DIR -ErrorAction SilentlyContinue
     Write-Host "  ✅ Removed: $HABIT_DIR"
   }
 } else {
-  Write-Host "`n📦  Keeping habit data at $HABIT_DIR" -ForegroundColor Yellow
+  Write-Host "`n📦  Keeping habit data at $HABIT_DIR (pass -DeleteData to remove it)" -ForegroundColor Yellow
 }
 
 Write-Host "`n✅ Uninstall complete." -ForegroundColor Green

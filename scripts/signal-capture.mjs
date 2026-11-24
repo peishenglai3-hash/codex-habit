@@ -1,13 +1,16 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 /**
- * signal-capture.mjs — v0.3 (Theory Upgrade)
- * Adds: order_of_worth, justification, test_count, reflexive_effect
- * All new fields are optional — backward compatible.
+ * signal-capture.mjs — local, append-only signal capture.
+ * Theory fields remain optional for backward compatibility.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import {
+  closeSync, existsSync, mkdirSync, openSync, readFileSync,
+  renameSync, unlinkSync, writeFileSync,
+} from "node:fs";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 const HABIT_DIR = join(homedir(), ".codex-habit");
 const SIGNALS_DIR = join(HABIT_DIR, "signals");
@@ -15,64 +18,146 @@ const BUFFER_FILE = join(HABIT_DIR, ".signal_buffer.json");
 const INDEX_FILE = join(HABIT_DIR, ".signals_index.json");
 
 function ensureDirs() {
-  [HABIT_DIR, SIGNALS_DIR, join(HABIT_DIR, "patterns", "active"),
-   join(HABIT_DIR, "patterns", "archived"), join(HABIT_DIR, "profile")
-  ].forEach(d => { if (!existsSync(d)) mkdirSync(d, { recursive: true }); });
+  for (const dir of [
+    HABIT_DIR,
+    SIGNALS_DIR,
+    join(HABIT_DIR, "patterns", "active"),
+    join(HABIT_DIR, "patterns", "archived"),
+    join(HABIT_DIR, "profile"),
+  ]) mkdirSync(dir, { recursive: true });
+}
+
+function readJson(file, fallback, validate) {
+  if (!existsSync(file)) return fallback;
+
+  let value;
+  try {
+    value = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`Cannot read ${file}; preserving the file for recovery: ${error.message}`);
+  }
+
+  if (!validate(value)) {
+    throw new Error(`Invalid data in ${file}; preserving the file for recovery.`);
+  }
+  return value;
+}
+
+function atomicWriteJson(file, value) {
+  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temp, JSON.stringify(value, null, 2), { flag: "wx" });
+    renameSync(temp, file);
+  } finally {
+    if (existsSync(temp)) unlinkSync(temp);
+  }
 }
 
 function readBuffer() {
-  try { return JSON.parse(readFileSync(BUFFER_FILE, "utf-8")); }
-  catch { return { signals: [] }; }
+  return readJson(BUFFER_FILE, { signals: [] }, value =>
+    value && Array.isArray(value.signals));
 }
-function writeBuffer(b) { writeFileSync(BUFFER_FILE, JSON.stringify(b, null, 2)); }
+
+function writeBuffer(buffer) {
+  atomicWriteJson(BUFFER_FILE, buffer);
+}
+
 function readIndex() {
-  try { return JSON.parse(readFileSync(INDEX_FILE, "utf-8")); }
-  catch { return { signals: [], patterns: [] }; }
+  return readJson(INDEX_FILE, { signals: [], patterns: [] }, value =>
+    value && Array.isArray(value.signals));
 }
-function writeIndex(i) { writeFileSync(INDEX_FILE, JSON.stringify(i, null, 2)); }
+
+function writeIndex(index) {
+  atomicWriteJson(INDEX_FILE, index);
+}
+
+function signalId(timestamp) {
+  const date = new Date(timestamp);
+  const day = (Number.isNaN(date.getTime()) ? new Date() : date)
+    .toISOString().slice(0, 10).replaceAll("-", "");
+  return `sig_${day}_${randomUUID()}`;
+}
+
+function indexEntry(sig) {
+  return {
+    id: sig.id,
+    type: sig.type,
+    category: sig.category,
+    value: sig.value || "",
+    timestamp: sig.timestamp,
+    session_id: sig.session_id ?? null,
+    context: sig.context ?? null,
+    evidence: sig.evidence ?? null,
+    evidence_refs: sig.evidence_refs ?? null,
+    decision: sig.decision ?? null,
+    decision_confirmation: sig.decision_confirmation ?? null,
+    confidence: sig.confidence ?? 0.5,
+    // Optional theory fields preserve provenance without asserting confirmation.
+    order_of_worth: sig.order_of_worth ?? null,
+    justification: sig.justification ?? null,
+    test_count: sig.test_count ?? 0,
+    test_survival_rate: sig.test_survival_rate ?? null,
+    reflexive_effect: sig.reflexive_effect ?? null,
+    context_label: sig.context_label ?? null,
+    source: sig.source || "codex",
+  };
+}
+
+function signalMarkdown(sig) {
+  const meta = { ...sig };
+  delete meta.evidence;
+  const lines = ["---"];
+  for (const [key, value] of Object.entries(meta)) {
+    if (value !== undefined && value !== null) {
+      lines.push(`${key}: ${typeof value === "object" ? JSON.stringify(value) : value}`);
+    }
+  }
+  lines.push("---", "", `Evidence: ${sig.evidence || "(auto)"}`);
+  return lines.join("\n");
+}
 
 function flushBuffer() {
-  const buf = readBuffer();
-  if (buf.signals.length === 0) return console.log(JSON.stringify({ status: "empty", flushed: 0 }));
+  const buffer = readBuffer();
+  if (buffer.signals.length === 0) {
+    console.log(JSON.stringify({ status: "empty", flushed: 0 }));
+    return;
+  }
 
   const now = new Date();
   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const targetDir = join(SIGNALS_DIR, month);
-  if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
+  mkdirSync(targetDir, { recursive: true });
 
-  let flushed = 0;
+  // Persist IDs before writing signal files. A retry after interruption then
+  // recognizes already-written records instead of overwriting or duplicating them.
+  for (const sig of buffer.signals) {
+    if (!sig.id) sig.id = signalId(sig.timestamp || now.toISOString());
+    if (!sig.timestamp) sig.timestamp = now.toISOString();
+  }
+  writeBuffer(buffer);
+
   const index = readIndex();
-  for (const sig of buf.signals) {
-    const id = `sig_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}_${String(flushed + 1).padStart(3, "0")}`;
-    sig.id = id;
-    sig.timestamp = now.toISOString();
+  const indexedIds = new Set(index.signals.map(entry => entry.id).filter(Boolean));
+  let flushed = 0;
 
-    // Build markdown with optional theory fields
-    const meta = { ...sig };
-    delete meta.evidence;
-    delete meta.context;
-    const lines = ["---"];
-    for (const [k, v] of Object.entries(meta)) {
-      if (v !== undefined && v !== null) lines.push(`${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`);
+  for (const sig of buffer.signals) {
+    const path = join(targetDir, `${sig.id}.md`);
+    if (!existsSync(path)) {
+      let fd;
+      try {
+        fd = openSync(path, "wx");
+        writeFileSync(fd, signalMarkdown(sig));
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+      } finally {
+        if (fd !== undefined) closeSync(fd);
+      }
     }
-    lines.push("---", "", `Evidence: ${sig.evidence || "(auto)"}`);
 
-    writeFileSync(join(targetDir, `${id}.md`), lines.join("\n"));
-
-    // Store in index — include all theory fields
-    index.signals.push({
-      id, type: sig.type, category: sig.category,
-      value: sig.value || "", timestamp: sig.timestamp,
-      confidence: sig.confidence || 0.5,
-      // Theory-grounded fields (optional)
-      order_of_worth: sig.order_of_worth || null,
-      justification: sig.justification || null,
-      test_count: sig.test_count || 0,
-      test_survival_rate: sig.test_survival_rate || null,
-      reflexive_effect: sig.reflexive_effect || null,
-      context_label: sig.context_label || null,
-      source: sig.source || "codex",
-    });
+    if (!indexedIds.has(sig.id)) {
+      index.signals.push(indexEntry(sig));
+      indexedIds.add(sig.id);
+    }
     flushed++;
   }
 
@@ -82,35 +167,39 @@ function flushBuffer() {
 }
 
 function capture() {
-  ensureDirs();
-  const buf = readBuffer();
+  const buffer = readBuffer();
   let input = "";
-  process.stdin.on("data", c => input += c);
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", chunk => { input += chunk; });
   process.stdin.on("end", () => {
     try {
       const sig = JSON.parse(input);
       sig.timestamp = new Date().toISOString();
-      buf.signals.push(sig);
-      writeBuffer(buf);
-      const s = buf.signals.length;
-      console.log(JSON.stringify({ status: "captured", bufferSize: s }));
-      if (s >= 5) flushBuffer();
-    } catch (e) {
-      console.error(JSON.stringify({ error: e.message }));
-      process.exit(1);
+      sig.id = signalId(sig.timestamp);
+      buffer.signals.push(sig);
+      writeBuffer(buffer);
+      console.log(JSON.stringify({ status: "captured", bufferSize: buffer.signals.length }));
+      if (buffer.signals.length >= 5) flushBuffer();
+    } catch (error) {
+      console.error(JSON.stringify({ error: error.message }));
+      process.exitCode = 1;
     }
   });
 }
 
-const arg = process.argv[2];
 ensureDirs();
-switch (arg) {
-  case "--capture": capture(); break;
-  case "--flush": flushBuffer(); break;
-  case "--buffer":
-    const b = readBuffer();
-    console.log(JSON.stringify({ status: "ok", bufferSize: b.signals.length }));
+switch (process.argv[2]) {
+  case "--capture":
+    capture();
     break;
+  case "--flush":
+    flushBuffer();
+    break;
+  case "--buffer": {
+    const buffer = readBuffer();
+    console.log(JSON.stringify({ status: "ok", bufferSize: buffer.signals.length }));
+    break;
+  }
   default:
     console.log(JSON.stringify({ usage: "node signal-capture.mjs [--capture | --flush | --buffer]" }));
 }

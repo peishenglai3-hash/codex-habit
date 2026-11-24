@@ -1,4 +1,4 @@
-﻿<p align="center">
+<p align="center">
   <img src="https://img.shields.io/badge/Codex_Habitat-v0.2.0--dev-8B5CF6?style=for-the-badge&logo=openai&logoColor=white" alt="Version" />
   <img src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge" alt="License" />
   <img src="https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows" />
@@ -92,6 +92,10 @@ npx skills add https://github.com/peishenglai3-hash/codex-habit
 ```
 
 That is it. The skill activates automatically on your next Codex session.
+
+### Uninstall
+
+Run `uninstall.ps1` to remove the plugin files. Habit data in `~/.codex-habit/` is kept by default; pass `-DeleteData` only when you also want to permanently remove it.
 
 ### What Gets Installed
 
@@ -257,3 +261,7 @@ MIT — see [LICENSE](LICENSE).
 <p align="center">
   <sub>Codex Habitat · Built one conversation at a time</sub>
 </p>
+
+## Validation
+
+The dependency-free regression suite runs on fresh GitHub-hosted Linux and Windows VMs. Signal-capture tests use a temporary `HOME`; Windows uninstall tests operate only on a temporary plugin/data fixture. No model, personal memory, provider credential, or expected task label is part of this test job.

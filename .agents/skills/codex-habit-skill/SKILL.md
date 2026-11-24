@@ -76,6 +76,19 @@ What kind of project/work the user is doing.
 | Current task type | `context:task:refactoring` |
 | Constraints mentioned | `context:constraint:performance_critical` |
 
+### 1.6 Decision Signals
+Capture a decision when the user considers, chooses, rejects, or revises an option. Preserve the stated alternatives, rationale, evidence, and known outcome. A missing outcome or confirmation remains unknown; do not infer that a choice became a reusable rule.
+
+Example fields:
+```
+type: decision
+decision:
+  selected: "smaller migration"
+  alternative: "full rewrite"
+  rationale: "keeps rollback simple"
+decision_confirmation: explicit_user_confirmation  # include only when directly stated
+```
+
 ### Capture Format
 Record each signal as:
 ```
@@ -85,18 +98,21 @@ Record each signal as:
 Frontmatter:
 ```yaml
 ---
-id: sig_20260610_001
-type: preference           # preference | rejection | workflow | communication | context
+id: sig_20260610_550e8400-e29b-41d4-a716-446655440000
+type: preference           # preference | rejection | workflow | communication | context | self_reflection | decision | concept_definition
 category: tech_stack       # the domain
 value: react               # the specific value
 confidence: 0.85           # how sure you are (0-1)
 context: "Building a new SaaS frontend"
 evidence: "User said: 'I prefer React over Vue for this'"
-source: user_utterance     # how you learned this
-session_id: sess_001
+evidence_refs: ["event:turn-02"]  # optional source references
+source: user_utterance            # how you learned this
+session_id: sess_001              # preserve when supplied; do not invent a shared session
 timestamp: 2026-06-10T12:00:00Z
 ---
 ```
+
+Capture preserves the generated `id`, `source`, `evidence`, `evidence_refs`, and `session_id` in the signal record and lookup index. If no real session identifier is available, store it as unknown; the habit graph will not connect signals without an explicit shared `session_id`.
 
 Body (freeform notes):
 ```
@@ -110,23 +126,26 @@ This was during project setup conversation.
 
 Signals in isolation are noise. Connections are wisdom.
 
-### 2.1 Build Associations
-After capturing 3+ signals in a session, build associations:
+### 2.1 Build Candidate Associations
+The graph creates a candidate association only for distinct signal groups that share an explicit, non-empty `session_id`. It keeps the contributing signal IDs and counts the sessions supporting the pair. Signals without a known session ID stay unlinked; the graph does not infer a relationship from category or frequency alone.
 
 ```yaml
-# example association
-sources:
-  - sig_20260610_001  # preference:react
-  - sig_20260610_003  # preference:tailwind
-  - sig_20260610_005  # workflow:plan_first
-pattern: "When building frontend projects, this user prefers React + Tailwind with a plan-first approach"
-confidence: 0.72
+# example candidate; co-occurrence does not establish causation or confirmation
+id: pat_<stable-pair-hash>
+status: candidate
+signal_groups: ["preference:react", "preference:tailwind"]
+support_count: 2
+source_signal_ids: ["sig_...", "sig_..."]
 ```
 
-Store in:
+New generated graph results are stored under:
 ```
-~/.codex-habit/patterns/<YYYY-MM>/pattern-<id>.md
+~/.codex-habit/patterns/candidates/generated/<candidate-id>.md
 ```
+
+Generated candidates are a rebuildable projection of the current signal index. Each build tracks only the current generated files and removes a stale file only when its SHA-256 still matches the prior generated version. Edited files are preserved and reported as conflicts. Legacy files at the old `patterns/candidates/` path are retained because their ownership is unknown. Copy or move a candidate into `patterns/candidates/reviewed/` before adding human review notes; the graph never writes to that directory.
+
+Candidates are not copied into `patterns/active` and are not injected into future sessions by default. The graph does not mark a decision as user-confirmed.
 
 ### 2.2 Weight & Decay
 - Each confirmation raises confidence by +0.1 (up to 0.98)
