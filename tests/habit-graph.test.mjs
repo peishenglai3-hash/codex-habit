@@ -88,7 +88,7 @@ test("single category has a stable threshold shape and unscoped signals stay unl
     assert.equal(graph.patternCount, 1);
     assert.equal(graph.candidateCount, 0);
     assert.equal(readFileSync(activePath, "utf8"), activeText);
-    assert.deepEqual(candidateFiles(join(habit, "patterns", "candidates")), []);
+    assert.deepEqual(candidateFiles(join(habit, "patterns", "candidates", "generated")), []);
   });
 });
 
@@ -119,7 +119,7 @@ test("only explicit session co-occurrence creates stable, evidence-linked candid
     assert.ok(firstGraph.associations.every(item =>
       !item.source_signal_ids.some(id => id.startsWith("orphan-"))));
 
-    const candidateDir = join(habit, "patterns", "candidates");
+    const candidateDir = join(habit, "patterns", "candidates", "generated");
     assert.equal(existsSync(candidateDir), true);
     const firstCandidateFiles = candidateFiles(candidateDir);
     assert.ok(firstCandidateFiles.length > 0);
@@ -148,5 +148,57 @@ test("only explicit session co-occurrence creates stable, evidence-linked candid
     assert.deepEqual(reorderedGraph.associations, firstGraph.associations);
     assert.deepEqual(candidateFiles(candidateDir), firstCandidateFiles);
     assert.equal(readFileSync(activePath, "utf8"), activeText);
+  });
+});
+
+test("stale generated candidates are pruned by hash while review edits and legacy files stay intact", () => {
+  const signals = [
+    signal("a-1", "choice", "small-migration", "session-1"),
+    signal("b-1", "reason", "simple-rollback", "session-1"),
+    signal("a-2", "choice", "small-migration", "session-2"),
+    signal("b-2", "reason", "simple-rollback", "session-2"),
+    signal("a-3", "choice", "small-migration", "session-3"),
+    signal("c-3", "outcome", "faster-review", "session-3"),
+  ];
+
+  withFixture(signals, ({ habit, invoke }) => {
+    const candidateRoot = join(habit, "patterns", "candidates");
+    const generatedDir = join(candidateRoot, "generated");
+    const reviewedDir = join(candidateRoot, "reviewed");
+    mkdirSync(reviewedDir, { recursive: true });
+    const legacyPath = join(candidateRoot, "legacy-user-note.md");
+    const reviewedPath = join(reviewedDir, "reviewed-by-user.md");
+    writeFileSync(legacyPath, "Legacy candidate note; preserve without ownership metadata.");
+    writeFileSync(reviewedPath, "Human reviewed candidate; graph builds must not rewrite it.");
+
+    build(invoke);
+    const firstFiles = candidateFiles(generatedDir);
+    assert.ok(firstFiles.length >= 2);
+    const editedName = firstFiles[0];
+    const editedPath = join(generatedDir, editedName);
+    const edited = readFileSync(editedPath, "utf8") + "\n\nManual review: keep this annotation.\n";
+    writeFileSync(editedPath, edited);
+
+    const unscoped = [signal("new-1", "choice", "a"), signal("new-2", "reason", "b")];
+    const indexPath = join(habit, ".signals_index.json");
+    writeFileSync(indexPath, JSON.stringify({ signals: unscoped }, null, 2));
+    const insufficient = invoke(graphScript, ["--build"]);
+    assert.equal(insufficient.status, 0, insufficient.stderr);
+    assert.equal(JSON.parse(insufficient.stdout).status, "need_more");
+
+    const state = JSON.parse(readFileSync(join(habit, ".graph_state.json"), "utf8"));
+    assert.deepEqual(candidateFiles(generatedDir), [editedName]);
+    assert.deepEqual(state.generatedCandidates, {});
+    assert.deepEqual(Object.keys(state.candidateConflicts), [editedName.slice(0, -3)]);
+    assert.equal(readFileSync(editedPath, "utf8"), edited);
+    assert.equal(readFileSync(legacyPath, "utf8"), "Legacy candidate note; preserve without ownership metadata.");
+    assert.equal(readFileSync(reviewedPath, "utf8"), "Human reviewed candidate; graph builds must not rewrite it.");
+
+    const repeatedBuild = invoke(graphScript, ["--build"]);
+    assert.equal(repeatedBuild.status, 0, repeatedBuild.stderr);
+    assert.equal(JSON.parse(repeatedBuild.stdout).status, "need_more");
+    const repeated = JSON.parse(readFileSync(join(habit, ".graph_state.json"), "utf8"));
+    assert.deepEqual(Object.keys(repeated.candidateConflicts), [editedName.slice(0, -3)]);
+    assert.equal(readFileSync(editedPath, "utf8"), edited);
   });
 });

@@ -138,10 +138,13 @@ support_count: 2
 source_signal_ids: ["sig_...", "sig_..."]
 ```
 
-New graph results are stored under:
+New generated graph results are stored under:
 ```
-~/.codex-habit/patterns/candidates/<candidate-id>.md
+~/.codex-habit/patterns/candidates/generated/<candidate-id>.md
 ```
+
+Generated candidates are a rebuildable projection of the current signal index. Each build tracks only the current generated files and removes a stale file only when its SHA-256 still matches the prior generated version. Edited files are preserved and reported as conflicts. Legacy files at the old `patterns/candidates/` path are retained because their ownership is unknown. Copy or move a candidate into `patterns/candidates/reviewed/` before adding human review notes; the graph never writes to that directory.
+
 Candidates are not copied into `patterns/active` and are not injected into future sessions by default. The graph does not mark a decision as user-confirmed.
 
 ### 2.2 Weight & Decay

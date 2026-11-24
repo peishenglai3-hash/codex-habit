@@ -2,7 +2,7 @@
 /** Build evidence-linked pattern candidates from signals in explicit sessions. */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -10,6 +10,7 @@ const HABIT_DIR = join(homedir(), ".codex-habit");
 const INDEX_FILE = join(HABIT_DIR, ".signals_index.json");
 const PAT_ACTIVE = join(HABIT_DIR, "patterns", "active");
 const PAT_CANDIDATES = join(HABIT_DIR, "patterns", "candidates");
+const PAT_GENERATED = join(PAT_CANDIDATES, "generated");
 const GRAPH_FILE = join(HABIT_DIR, ".graph_state.json");
 
 function assure(path) {
@@ -137,23 +138,90 @@ function formatValue(value) {
     : String(value);
 }
 
-function persistCandidates(candidates) {
-  assure(PAT_CANDIDATES);
-  for (const pattern of candidates) {
-    const metadata = Object.entries(pattern).map(([key, value]) => `${key}: ${formatValue(value)}`);
-    const body = [
-      "---",
-      ...metadata,
-      "---",
-      "",
-      `# Candidate co-occurrence: ${pattern.signal_groups.join(" + ")}`,
-      `**Status:** candidate`,
-      `**Observed session support:** ${Math.round(pattern.support_rate * 100)}%`,
-      `**Support:** ${pattern.support_count} explicit session(s)`,
-      `**Source signals:** ${pattern.source_signal_ids.join(", ")}`,
-    ].join("\n");
-    writeFileSync(join(PAT_CANDIDATES, `${pattern.id}.md`), body);
+function candidateContent(pattern) {
+  const metadata = Object.entries(pattern).map(([key, value]) => `${key}: ${formatValue(value)}`);
+  return [
+    "---",
+    "generated_by: habit-graph",
+    ...metadata,
+    "---",
+    "",
+    `# Candidate co-occurrence: ${pattern.signal_groups.join(" + ")}`,
+    `**Status:** candidate`,
+    `**Observed session support:** ${Math.round(pattern.support_rate * 100)}%`,
+    `**Support:** ${pattern.support_count} explicit session(s)`,
+    `**Source signals:** ${pattern.source_signal_ids.join(", ")}`,
+  ].join("\n");
+}
+
+function hashContent(content) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function persistCandidates(candidates, previousManifest = {}, previousConflicts = {}) {
+  assure(PAT_GENERATED);
+  const previous = previousManifest && typeof previousManifest === "object" && !Array.isArray(previousManifest)
+    ? previousManifest
+    : {};
+  const current = new Map(candidates.map(pattern => [pattern.id, candidateContent(pattern)]));
+  const manifest = {};
+  const priorConflicts = previousConflicts && typeof previousConflicts === "object" && !Array.isArray(previousConflicts)
+    ? previousConflicts
+    : {};
+  const conflicts = new Map(
+    Object.entries(priorConflicts)
+      .filter(([id]) => /^pat_[a-f0-9]{20}$/u.test(id) && existsSync(join(PAT_GENERATED, `${id}.md`))),
+  );
+
+  for (const [id, expectedHash] of Object.entries(previous)) {
+    if (!/^pat_[a-f0-9]{20}$/u.test(id) || typeof expectedHash !== "string" || !/^[a-f0-9]{64}$/u.test(expectedHash)) continue;
+    if (current.has(id)) continue;
+    const path = join(PAT_GENERATED, `${id}.md`);
+    if (!existsSync(path)) continue;
+    if (!lstatSync(path).isFile() || hashContent(readFileSync(path, "utf8")) !== expectedHash) {
+      conflicts.set(id, expectedHash);
+      continue;
+    }
+    unlinkSync(path);
   }
+
+  for (const [id, content] of current) {
+    const path = join(PAT_GENERATED, `${id}.md`);
+    const expectedHash = previous[id];
+    const nextHash = hashContent(content);
+    if (existsSync(path)) {
+      if (!lstatSync(path).isFile()) {
+        conflicts.set(id, typeof expectedHash === "string" ? expectedHash : null);
+        continue;
+      }
+      const existingHash = hashContent(readFileSync(path, "utf8"));
+      if (conflicts.has(id)) {
+        if (existingHash === nextHash) {
+          manifest[id] = nextHash;
+          conflicts.delete(id);
+        }
+        continue;
+      }
+      if (typeof expectedHash === "string" && existingHash === expectedHash) {
+        if (existingHash !== nextHash) writeFileSync(path, content);
+        manifest[id] = nextHash;
+      } else if (existingHash === nextHash) {
+        manifest[id] = nextHash;
+      } else {
+        conflicts.set(id, typeof expectedHash === "string" ? expectedHash : null);
+      }
+      continue;
+    }
+    try {
+      writeFileSync(path, content, { flag: "wx" });
+      manifest[id] = nextHash;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      conflicts.set(id, typeof expectedHash === "string" ? expectedHash : null);
+    }
+  }
+
+  return { manifest, conflicts: Object.fromEntries([...conflicts.entries()].sort(([left], [right]) => left.localeCompare(right))) };
 }
 
 function activePatternCount() {
@@ -167,6 +235,16 @@ switch (process.argv[2]) {
   case "--build": {
     const index = readJSON(INDEX_FILE, { signals: [] });
     if (index.signals.length < 3) {
+      const graph = readJSON(GRAPH_FILE);
+      const persisted = persistCandidates([], graph.generatedCandidates, graph.candidateConflicts);
+      graph.generatedCandidates = persisted.manifest;
+      graph.candidateConflicts = persisted.conflicts;
+      graph.candidateCount = 0;
+      graph.associations = [];
+      graph.lastBuilt = new Date().toISOString();
+      graph.patternCount = activePatternCount();
+      graph.adaptiveThreshold = {};
+      writeFileSync(GRAPH_FILE, JSON.stringify(graph, null, 2));
       console.log(JSON.stringify({ status: "need_more", count: index.signals.length }));
       process.exit(0);
     }
@@ -174,10 +252,11 @@ switch (process.argv[2]) {
     const adaptive = calcAdaptiveThreshold(index.signals);
     const associations = buildAssociations(index.signals);
     const candidates = extractCandidates(associations, adaptive.threshold);
-    persistCandidates(candidates);
-
     const graph = readJSON(GRAPH_FILE);
+    const persisted = persistCandidates(candidates, graph.generatedCandidates, graph.candidateConflicts);
     graph.associations = associations;
+    graph.generatedCandidates = persisted.manifest;
+    graph.candidateConflicts = persisted.conflicts;
     graph.lastBuilt = new Date().toISOString();
     graph.patternCount = activePatternCount();
     graph.candidateCount = candidates.length;
@@ -195,6 +274,7 @@ switch (process.argv[2]) {
       associations: associations.length,
       patterns: graph.patternCount,
       candidates: candidates.length,
+      candidateConflicts: persisted.conflicts.length,
       adaptiveThreshold: {
         threshold: Math.round(adaptive.threshold * 100) / 100,
         cv: adaptive.cv,
@@ -211,6 +291,7 @@ switch (process.argv[2]) {
       signals: index.signals.length,
       patterns: activePatternCount(),
       candidates: graph.candidateCount || 0,
+      candidateConflicts: Object.keys(graph.candidateConflicts || {}).length,
       adaptiveThreshold: graph.adaptiveThreshold || {},
       lastBuilt: graph.lastBuilt,
     }));
