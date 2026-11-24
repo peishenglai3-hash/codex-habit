@@ -93,6 +93,10 @@ npx skills add https://github.com/peishenglai3-hash/codex-habit
 
 That is it. The skill activates automatically on your next Codex session.
 
+### Uninstall
+
+Run `uninstall.ps1` to remove the plugin files. Habit data in `~/.codex-habit/` is kept by default; pass `-DeleteData` only when you also want to permanently remove it.
+
 ### What Gets Installed
 
 ```
